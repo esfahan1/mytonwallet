@@ -23,7 +23,7 @@ import {
   updateCurrentDappTransfer,
   updateDappConnectRequest,
 } from '../../reducers';
-import { selectAccount, selectIsHardwareAccount, selectNewestTxIds } from '../../selectors';
+import { selectIsHardwareAccount, selectNewestTxTimestamps } from '../../selectors';
 
 import { getIsPortrait } from '../../../hooks/useDeviceScreen';
 
@@ -78,7 +78,7 @@ addActionHandler(
   'submitDappConnectRequestConfirmHardware',
   async (global, actions, { accountId: connectAccountId }) => {
     const {
-      accountId, promiseId, proof,
+      promiseId, proof,
     } = global.dappConnectRequest!;
 
     global = getGlobal();
@@ -91,7 +91,7 @@ addActionHandler(
     const ledgerApi = await import('../../../util/ledger');
 
     try {
-      const signature = await ledgerApi.signLedgerProof(accountId!, proof!);
+      const signature = await ledgerApi.signLedgerProof(connectAccountId!, proof!);
       actions.switchAccount({ accountId: connectAccountId });
       await callApi('confirmDappRequestConnect', promiseId!, {
         accountId: connectAccountId,
@@ -256,13 +256,20 @@ addActionHandler('submitDappTransferHardware', async (global, actions) => {
   setGlobal(global);
 });
 
-addActionHandler('getDapps', async (global) => {
+addActionHandler('getDapps', async (global, actions) => {
   const { currentAccountId } = global;
 
-  const result = await callApi('getDapps', currentAccountId!);
+  let result = await callApi('getDapps', currentAccountId!);
 
   if (!result) {
     return;
+  }
+
+  // Check for broken dapps without origin
+  const brokenDapp = result.find(({ origin }) => !origin);
+  if (brokenDapp) {
+    actions.deleteDapp({ origin: brokenDapp.origin });
+    result = result.filter(({ origin }) => origin);
   }
 
   global = getGlobal();
@@ -306,8 +313,6 @@ addActionHandler('apiUpdateDappConnect', async (global, actions, {
     global = getGlobal();
   }
 
-  const { isHardware } = selectAccount(global, accountId)!;
-
   global = updateDappConnectRequest(global, {
     state: DappConnectState.Info,
     promiseId,
@@ -315,7 +320,7 @@ addActionHandler('apiUpdateDappConnect', async (global, actions, {
     dapp,
     permissions: {
       isAddressRequired: permissions.address,
-      isPasswordRequired: permissions.proof && !isHardware,
+      isPasswordRequired: permissions.proof,
     },
     proof,
   });
@@ -334,8 +339,8 @@ addActionHandler('apiUpdateDappSendTransaction', async (global, actions, {
 }) => {
   const { currentAccountId, currentDappTransfer: { promiseId: currentPromiseId } } = global;
   if (currentAccountId !== accountId) {
-    const newestTxIds = selectNewestTxIds(global, accountId);
-    await callApi('activateAccount', accountId, newestTxIds);
+    const nextNewestTxTimestamps = selectNewestTxTimestamps(global, accountId);
+    await callApi('activateAccount', accountId, nextNewestTxTimestamps);
     global = getGlobal();
     setGlobal(updateCurrentAccountId(global, accountId));
   }
