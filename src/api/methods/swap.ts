@@ -19,8 +19,6 @@ import type {
 
 import { TONCOIN } from '../../config';
 import { parseAccountId } from '../../util/account';
-import { assert } from '../../util/assert';
-import { fromDecimal } from '../../util/decimals';
 import { buildSwapId } from '../../util/swap/buildSwapId';
 import chains from '../chains';
 import { fetchStoredTonWallet } from '../common/accounts';
@@ -81,19 +79,29 @@ export async function swapSubmit(
   withDiesel?: boolean,
 ) {
   const { address } = await fetchStoredTonWallet(accountId);
-  const transferList = transfers.map((transfer) => ({
+  const transferList: TonTransferParams[] = transfers.map((transfer) => ({
     ...transfer,
     amount: BigInt(transfer.amount),
     isBase64Payload: true,
   }));
 
+  if (historyItem.from !== TONCOIN.symbol) {
+    transferList[0] = await ton.insertMintlessPayload('mainnet', address, historyItem.from, transferList[0]);
+  }
+
+  const gaslessType = withDiesel ? 'diesel' : undefined;
+
   const result = await ton.submitMultiTransfer(
-    accountId, password, transferList, undefined, withDiesel,
+    {
+      accountId, password, messages: transferList, gaslessType,
+    },
   );
 
   if ('error' in result) {
     return result;
   }
+
+  delete result.messages[0].stateInit;
 
   const from = getSwapItemSlug(historyItem, historyItem.from);
   const to = getSwapItemSlug(historyItem, historyItem.to);
@@ -184,7 +192,6 @@ export async function swapCexCreateTransaction(
 ): Promise<{
     swap: ApiSwapHistoryItem;
     activity: ApiSwapActivity;
-    transfer?: TonTransferParams;
   }> {
   const authToken = await getBackendAuthToken(accountId, password);
 
@@ -192,20 +199,6 @@ export async function swapCexCreateTransaction(
     authToken,
   });
   const activity = swapItemToActivity(swap);
-
-  let transfer: {
-    toAddress: string;
-    amount: bigint;
-  } | undefined;
-
-  if (request.from === TONCOIN.symbol) {
-    transfer = {
-      toAddress: swap.cex!.payinAddress,
-      amount: fromDecimal(swap.fromAmount),
-    };
-
-    assert(transfer.amount <= fromDecimal(request.fromAmount));
-  }
 
   onUpdate({
     type: 'newActivities',
@@ -216,5 +209,5 @@ export async function swapCexCreateTransaction(
 
   void callHook('onSwapCreated', accountId, swap.timestamp - 1);
 
-  return { swap, activity, transfer };
+  return { swap, activity };
 }

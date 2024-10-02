@@ -151,7 +151,7 @@ function TokenSelector({
   const popularTokens = useMemo(() => {
     if (shouldHideNotSupportedTokens) {
       return popularTokensProp?.filter(
-        (popularToken) => 'blockchain' in popularToken && popularToken.blockchain === 'ton',
+        (popularToken) => 'chain' in popularToken && popularToken.chain === 'ton',
       );
     }
 
@@ -545,7 +545,7 @@ export default memo(withGlobal<OwnProps>((global): StateProps => {
     baseCurrency,
     isLoading,
     token,
-    pairsBySlug,
+    pairsBySlug: pairsBySlug?.bySlug,
     tokenInSlug,
     userTokens,
     popularTokens,

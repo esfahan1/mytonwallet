@@ -265,15 +265,16 @@ export type UserToken = {
   color?: string;
 };
 
-export type UserSwapToken = {
+export type UserSwapToken = Omit<UserToken, 'change24h' | 'chain'> & {
+  chain: ApiChain | string;
   isPopular: boolean;
-} & Omit<UserToken, 'change24h'>;
+};
 
 export type TokenPeriod = '1D' | '7D' | '1M' | '3M' | '1Y' | 'ALL';
 
 export type PriceHistoryPeriods = Partial<Record<ApiPriceHistoryPeriod, ApiHistoryList>>;
 
-export type DieselStatus = 'not-available' | 'not-authorized' | 'pending-previous' | 'available';
+export type DieselStatus = 'not-available' | 'not-authorized' | 'pending-previous' | 'available' | 'stars-fee';
 
 export interface Account {
   title?: string;
@@ -448,6 +449,7 @@ export type GlobalState = {
     dieselStatus?: DieselStatus;
     dieselAmount?: bigint;
     withDiesel?: boolean;
+    isGaslessWithStars?: boolean;
   };
 
   currentSwap: {
@@ -476,6 +478,7 @@ export type GlobalState = {
     feeSource?: SwapFeeSource;
     toAddress?: string;
     payinAddress?: string;
+    payoutAddress?: string;
     payinExtraId?: string;
     pairs?: {
       bySlug: Record<string, AssetPairs>;
@@ -715,6 +718,7 @@ export interface ActionPayloads {
     shouldEncrypt?: boolean;
     binPayload?: string;
     stateInit?: string;
+    isGaslessWithStars?: boolean;
   };
   fetchNftFee: {
     toAddress: string;
@@ -729,6 +733,7 @@ export interface ActionPayloads {
     shouldEncrypt?: boolean;
     nftAddresses?: string[];
     withDiesel?: boolean;
+    isGaslessWithStars?: boolean;
     stateInit?: string;
   };
   submitTransferConfirm: undefined;
@@ -837,6 +842,7 @@ export interface ActionPayloads {
   toggleTokensWithNoCost: { isEnabled: boolean };
   toggleSortByValue: { isEnabled: boolean };
   updateOrderedSlugs: { orderedSlugs: string[] };
+  rebuildOrderedSlugs: undefined;
   toggleExceptionToken: { slug: string };
   addToken: { token: UserToken };
   deleteToken: { slug: string };

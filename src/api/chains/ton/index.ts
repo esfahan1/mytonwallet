@@ -1,7 +1,6 @@
 export {
   generateMnemonic,
   rawSign,
-  mnemonicToKeyPair,
   validateMnemonic,
   fetchPrivateKey,
   getWalletFromBip39Mnemonic,
@@ -70,6 +69,7 @@ export {
   getTokenBalances,
   getAddressTokenBalances,
   fetchToken,
+  insertMintlessPayload,
 } from './tokens';
 export {
   resolveTokenWalletAddress,

@@ -5,13 +5,14 @@ import type { ContractParamter, Transaction } from 'tronweb/lib/commonjs/types';
 
 import type { ApiSubmitTransferOptions, CheckTransactionDraftOptions } from '../../methods/types';
 import type { ApiCheckTransactionDraftResult } from '../ton/types';
+import type { ApiAccountWithMnemonic } from '../../types';
 import { ApiTransactionDraftError, ApiTransactionError } from '../../types';
 
 import { parseAccountId } from '../../../util/account';
 import { logDebugError } from '../../../util/logs';
 import { getChainParameters, getTronClient } from './util/tronweb';
-import { fetchStoredTronWallet } from '../../common/accounts';
-import { fetchMnemonic } from '../../common/mnemonic';
+import { fetchStoredAccount, fetchStoredTronWallet } from '../../common/accounts';
+import { getMnemonic } from '../../common/mnemonic';
 import { handleServerError } from '../../errors';
 import { getWalletBalance } from './wallet';
 import type { ApiSubmitTransferTronResult } from './types';
@@ -61,7 +62,11 @@ export async function checkTransactionDraft(
 
     const trxAmount = tokenAddress ? fee : amount + fee;
     if (trxBalance < trxAmount) {
-      return { error: ApiTransactionDraftError.InsufficientBalance };
+      return {
+        resolvedAddress: toAddress,
+        fee,
+        error: ApiTransactionDraftError.InsufficientBalance,
+      };
     }
 
     return {
@@ -87,7 +92,8 @@ export async function submitTransfer(options: ApiSubmitTransferOptions): Promise
   try {
     const tronWeb = getTronClient(network);
 
-    const { address } = await fetchStoredTronWallet(accountId);
+    const account = await fetchStoredAccount<ApiAccountWithMnemonic>(accountId);
+    const { address } = account.ton;
     const trxBalance = await getWalletBalance(network, address);
 
     const trxAmount = tokenAddress ? fee : fee + amount;
@@ -97,7 +103,7 @@ export async function submitTransfer(options: ApiSubmitTransferOptions): Promise
       return { error: ApiTransactionError.InsufficientBalance };
     }
 
-    const mnemonic = await fetchMnemonic(accountId, password);
+    const mnemonic = await getMnemonic(accountId, password, account);
     const privateKey = tronWeb.fromMnemonic(mnemonic!.join(' ')).privateKey.slice(2);
 
     if (tokenAddress) {

@@ -117,7 +117,7 @@ export const PROXY_HOSTS = process.env.PROXY_HOSTS;
 
 export const TINY_TRANSFER_MAX_COST = 0.01;
 
-export const LANG_CACHE_NAME = 'mtw-lang-130';
+export const LANG_CACHE_NAME = 'mtw-lang-131';
 
 export const LANG_LIST: LangItem[] = [{
   langCode: 'en',
@@ -359,7 +359,7 @@ export const INIT_SWAP_ASSETS: Record<string, ApiSwapAsset> = {
 };
 
 export const DEFAULT_SWAP_SECOND_TOKEN_SLUG = TON_USDT_SLUG;
-export const DEFAULT_CEX_SWAP_SECOND_TOKEN_SLUG = 'usdtrx';
+export const DEFAULT_CEX_SWAP_SECOND_TOKEN_SLUG = TRC20_USDT_MAINNET_SLUG;
 
 export const MULTITAB_DATA_CHANNEL_NAME = 'mtw-multitab';
 export const ACTIVE_TAB_STORAGE_KEY = 'mtw-active-tab';
@@ -461,5 +461,10 @@ export const TINY_TOKENS = new Set([
   'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs', // USDT
   'EQCvxJy4eG8hyHBFsZ7eePxrRsUQSFE_jpptRAYBmcG_DOGS', // DOGS
 ]);
+export const TOKENS_WITH_STARS_FEE = new Set([
+  'EQAJ8uWd7EBqsmpSWaRdf_I-8R8-XHwh3gsNKhy-UrdrPcUo', // HASMTER
+]);
+
+export const STARS_SYMBOL = '⭐️';
 
 export const GIVEAWAY_CHECKIN_URL = process.env.GIVEAWAY_CHECKIN_URL || 'https://giveaway.mytonwallet.io';

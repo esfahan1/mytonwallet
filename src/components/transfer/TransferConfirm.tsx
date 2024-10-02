@@ -9,6 +9,7 @@ import {
   BURN_CHUNK_DURATION_APPROX_SEC,
   NFT_BATCH_SIZE,
   NOTCOIN_EXCHANGERS,
+  STARS_SYMBOL,
   TONCOIN,
 } from '../../config';
 import renderText from '../../global/helpers/renderText';
@@ -66,6 +67,7 @@ function TransferConfirm({
     binPayload,
     nfts,
     withDiesel,
+    isGaslessWithStars,
     dieselAmount,
     stateInit,
   },
@@ -130,7 +132,7 @@ function TransferConfirm({
         amount={toDecimal(amount ?? 0n, decimals)}
         symbol={symbol}
         fee={dieselAmount ? toDecimal(dieselAmount, decimals) : undefined}
-        feeSymbol={symbol}
+        feeSymbol={isGaslessWithStars ? STARS_SYMBOL : symbol}
       />
     );
   }
@@ -185,6 +187,15 @@ function TransferConfirm({
   const burningDurationMin = nfts?.length
     ? (Math.ceil(nfts.length / NFT_BATCH_SIZE) * BURN_CHUNK_DURATION_APPROX_SEC) / 60
     : undefined;
+
+  const submitBtnText = lang(
+    (isBurning || isNotcoinBurning)
+      ? 'Burn NFT'
+      : isGaslessWithStars
+        ? 'Pay fee with %stars_symbol%'
+        : 'Confirm',
+    isGaslessWithStars ? { stars_symbol: STARS_SYMBOL } : undefined,
+  );
 
   return (
     <>
@@ -263,7 +274,7 @@ function TransferConfirm({
             className={modalStyles.button}
             onClick={handleConfirm}
           >
-            {lang((isBurning || isNotcoinBurning) ? 'Burn NFT' : 'Confirm')}
+            {submitBtnText}
           </Button>
         </div>
       </div>

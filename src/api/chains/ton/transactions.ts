@@ -5,6 +5,7 @@ import {
 import type { DieselStatus } from '../../../global/types';
 import type { CheckTransactionDraftOptions } from '../../methods/types';
 import type {
+  ApiAccountWithMnemonic,
   ApiActivity,
   ApiAnyDisplayError,
   ApiNetwork,
@@ -28,7 +29,7 @@ import type { TonWallet } from './util/tonCore';
 import { ApiCommonError, ApiTransactionDraftError, ApiTransactionError } from '../../types';
 
 import {
-  DEFAULT_FEE, DIESEL_ADDRESS, DIESEL_TOKENS, ONE_TON, TONCOIN,
+  DEFAULT_FEE, DIESEL_ADDRESS, DIESEL_TOKENS, ONE_TON, TOKENS_WITH_STARS_FEE, TONCOIN,
 } from '../../../config';
 import { parseAccountId } from '../../../util/account';
 import { bigintMultiplyToNumber } from '../../../util/bigint';
@@ -56,12 +57,14 @@ import {
   resolveTokenWalletAddress,
   toBase64Address,
 } from './util/tonCore';
-import { fetchStoredTonWallet } from '../../common/accounts';
+import { fetchStoredAccount, fetchStoredTonWallet } from '../../common/accounts';
 import { callBackendGet } from '../../common/backend';
 import { updateTransactionMetadata } from '../../common/helpers';
 import { getTokenByAddress, getTokenBySlug } from '../../common/tokens';
 import { base64ToBytes, isKnownStakingPool } from '../../common/utils';
 import { ApiServerError, handleServerError } from '../../errors';
+import { createBody } from './walletV5/walletV5';
+import { ActionSendMsg, packActionsList } from './walletV5/walletV5Actions';
 import { resolveAddress } from './address';
 import { fetchKeyPair, fetchPrivateKey } from './auth';
 import {
@@ -69,7 +72,6 @@ import {
   FEE_FACTOR,
   STAKE_COMMENT,
   TINY_TOKEN_TRANSFER_AMOUNT,
-  TOKEN_TRANSFER_AMOUNT,
   TRANSFER_TIMEOUT_SEC,
   UNSTAKE_COMMENT,
 } from './constants';
@@ -180,7 +182,7 @@ export async function checkTransactionDraft(
       }
     }
 
-    const { address, isInitialized: isWalletInitialized } = await fetchStoredTonWallet(accountId);
+    const { address, isInitialized: isWalletInitialized, version } = await fetchStoredTonWallet(accountId);
 
     if (data && typeof data === 'string' && !isBase64Data) {
       data = commentToBytes(data);
@@ -194,9 +196,14 @@ export async function checkTransactionDraft(
       }
     } else {
       const tokenAmount: bigint = amount;
-      const tokenTransfer = await buildTokenTransfer(
-        network, tokenAddress, address, toAddress, amount, data,
-      );
+      const tokenTransfer = await buildTokenTransfer({
+        network,
+        tokenAddress,
+        fromAddress: address,
+        toAddress,
+        amount,
+        payload: data,
+      });
 
       ({ amount, toAddress, payload: data } = tokenTransfer);
       const { tokenWallet, isTokenWalletDeployed, mintlessTokenBalance } = tokenTransfer;
@@ -228,26 +235,27 @@ export async function checkTransactionDraft(
     });
 
     const realFee = await calculateFee(network, wallet, transaction, isWalletInitialized);
-    result.fee = bigintMultiplyToNumber(realFee, FEE_FACTOR) + (tokenAddress ? TOKEN_TRANSFER_AMOUNT : 0n);
+    result.fee = bigintMultiplyToNumber(realFee, FEE_FACTOR) + (tokenAddress ? amount : 0n);
 
     const toncoinBalance = await getWalletBalance(network, wallet);
 
     const isFullTonBalance = !tokenAddress && toncoinBalance === amount;
     const isEnoughBalance = isFullTonBalance
       ? toncoinBalance > realFee
-      : toncoinBalance >= amount + result.fee;
+      : toncoinBalance >= result.fee;
 
     if (
       network === 'mainnet'
       && tokenAddress
-      && DIESEL_TOKENS.has(tokenAddress)
+      && (DIESEL_TOKENS.has(tokenAddress) || TOKENS_WITH_STARS_FEE.has(tokenAddress))
       && toncoinBalance < MAX_BALANCE_WITH_CHECK_DIESEL
     ) {
+      const isW5 = version === 'W5';
       const {
         status: dieselStatus,
         amount: dieselAmount,
         isAwaitingNotExpiredPrevious,
-      } = await fetchEstimateDiesel(accountId, tokenAddress) || {};
+      } = await fetchEstimateDiesel(accountId, tokenAddress, isW5) || {};
 
       if (!isEnoughBalance || isAwaitingNotExpiredPrevious) {
         result.dieselStatus = dieselStatus;
@@ -275,12 +283,14 @@ export async function checkTransactionDraft(
   }
 }
 
-function estimateDiesel(address: string, tokenAddress: string, toncoinAmount: string) {
+function estimateDiesel(address: string, tokenAddress: string, toncoinAmount: string, isW5: boolean) {
   return callBackendGet<{
     status: DieselStatus;
     amount?: string;
     pendingCreatedAt?: string;
-  }>('/diesel/estimate', { address, tokenAddress, toncoinAmount });
+  }>('/diesel/estimate', {
+    address, tokenAddress, toncoinAmount, isW5,
+  });
 }
 
 export async function checkToAddress(network: ApiNetwork, toAddress: string) {
@@ -348,12 +358,10 @@ export async function submitTransfer(options: ApiSubmitTransferOptions): Promise
   const { network } = parseAccountId(accountId);
 
   try {
-    const [wallet, { address: fromAddress, isInitialized }, keyPair] = await Promise.all([
-      getTonWallet(accountId),
-      fetchStoredTonWallet(accountId),
-      fetchKeyPair(accountId, password),
-    ]);
-    const { publicKey, secretKey } = keyPair!;
+    const account = await fetchStoredAccount<ApiAccountWithMnemonic>(accountId);
+    const { address: fromAddress, isInitialized } = account.ton;
+    const wallet = await getTonWallet(accountId, account.ton);
+    const { publicKey, secretKey } = (await fetchKeyPair(accountId, password, account))!;
 
     let encryptedComment: string | undefined;
 
@@ -373,7 +381,14 @@ export async function submitTransfer(options: ApiSubmitTransferOptions): Promise
         toAddress,
         payload: data,
         stateInit,
-      } = await buildTokenTransfer(network, tokenAddress, fromAddress, toAddress, amount, data));
+      } = await buildTokenTransfer({
+        network,
+        tokenAddress,
+        fromAddress,
+        toAddress,
+        amount,
+        payload: data,
+      }));
     }
 
     await waitPendingTransfer(network, fromAddress);
@@ -427,6 +442,7 @@ export async function submitTransferWithDiesel(options: {
   tokenAddress: string;
   shouldEncrypt?: boolean;
   dieselAmount: bigint;
+  isGaslessWithStars?: boolean;
 }): Promise<ApiSubmitTransferWithDieselResult> {
   try {
     const {
@@ -437,13 +453,14 @@ export async function submitTransferWithDiesel(options: {
       tokenAddress,
       shouldEncrypt,
       dieselAmount,
+      isGaslessWithStars,
     } = options;
 
     let { data } = options;
 
     const { network } = parseAccountId(accountId);
 
-    const [{ address: fromAddress }, keyPair] = await Promise.all([
+    const [{ address: fromAddress, version }, keyPair] = await Promise.all([
       fetchStoredTonWallet(accountId),
       fetchKeyPair(accountId, password),
     ]);
@@ -459,11 +476,42 @@ export async function submitTransferWithDiesel(options: {
     }
 
     const messages: TonTransferParams[] = [
-      omit(await buildTokenTransfer(network, tokenAddress, fromAddress, toAddress, amount, data), ['tokenWallet']),
-      omit(await buildTokenTransfer(network, tokenAddress, fromAddress, DIESEL_ADDRESS, dieselAmount), ['tokenWallet']),
+      omit(await buildTokenTransfer({
+        network,
+        tokenAddress,
+        fromAddress,
+        toAddress,
+        amount,
+        payload: data,
+      }), ['tokenWallet']),
     ];
 
-    const result = await submitMultiTransfer(accountId, password, messages, undefined, true);
+    if (!isGaslessWithStars) {
+      messages.push(
+        omit(await buildTokenTransfer({
+          network,
+          tokenAddress,
+          fromAddress,
+          toAddress: DIESEL_ADDRESS,
+          amount: dieselAmount,
+        }), ['tokenWallet']),
+      );
+    }
+
+    let result;
+    const gaslessType = version === 'W5' ? 'w5' : 'diesel';
+    if (version === 'W5') {
+      result = await submitMultiTransfer({
+        accountId,
+        password,
+        messages,
+        gaslessType,
+      });
+    } else {
+      result = await submitMultiTransfer({
+        accountId, password, messages, gaslessType,
+      });
+    }
 
     return { ...result, encryptedComment };
   } catch (err) {
@@ -839,21 +887,26 @@ export async function checkMultiTransactionDraft(
   }
 }
 
-export async function submitMultiTransfer(
-  accountId: string,
-  password: string,
-  messages: TonTransferParams[],
-  expireAt?: number,
-  withDiesel = false,
-): Promise<ApiSubmitMultiTransferResult> {
+export type GaslessType = 'diesel' | 'w5';
+
+interface SubmitMultiTransferOptions {
+  accountId: string;
+  password: string;
+  messages: TonTransferParams[];
+  expireAt?: number;
+  gaslessType?: GaslessType;
+}
+
+export async function submitMultiTransfer({
+  accountId, password, messages, expireAt, gaslessType,
+}: SubmitMultiTransferOptions): Promise<ApiSubmitMultiTransferResult> {
   const { network } = parseAccountId(accountId);
 
   try {
-    const [wallet, { address: fromAddress, isInitialized }, privateKey] = await Promise.all([
-      getTonWallet(accountId),
-      fetchStoredTonWallet(accountId),
-      fetchPrivateKey(accountId, password),
-    ]);
+    const account = await fetchStoredAccount<ApiAccountWithMnemonic>(accountId);
+    const { address: fromAddress, isInitialized } = account.ton;
+    const wallet = await getTonWallet(accountId, account.ton);
+    const privateKey = await fetchPrivateKey(accountId, password, account);
 
     let totalAmount = 0n;
     messages.forEach((message) => {
@@ -864,11 +917,12 @@ export async function submitMultiTransfer(
 
     const { balance } = await getWalletInfo(network, wallet!);
 
+    const isW5 = gaslessType === 'w5';
     const { seqno, transaction } = await signMultiTransaction(
-      network, wallet!, messages, privateKey, expireAt,
+      network, wallet!, messages, privateKey, expireAt, isW5,
     );
 
-    if (!withDiesel) {
+    if (!gaslessType) {
       const fee = await calculateFee(network, wallet!, transaction, isInitialized);
       if (balance < totalAmount + fee) {
         return { error: ApiTransactionError.InsufficientBalance };
@@ -876,9 +930,11 @@ export async function submitMultiTransfer(
     }
 
     const client = getTonClient(network);
-    const { msgHash, boc } = await sendExternal(client, wallet!, transaction, withDiesel);
+    const { msgHash, boc, paymentLink } = await sendExternal(
+      client, wallet!, transaction, gaslessType,
+    );
 
-    if (!withDiesel) {
+    if (!gaslessType) {
       addPendingTransfer(network, fromAddress, seqno, boc);
     }
 
@@ -895,6 +951,7 @@ export async function submitMultiTransfer(
       messages: clearedMessages,
       boc,
       msgHash,
+      paymentLink,
     };
   } catch (err) {
     logDebugError('submitMultiTransfer', err);
@@ -908,6 +965,7 @@ async function signMultiTransaction(
   messages: TonTransferParams[],
   privateKey: Uint8Array = new Uint8Array(64),
   expireAt?: number,
+  withW5Diesel = false,
 ) {
   const { seqno } = await getWalletInfo(network, wallet);
   if (!expireAt) {
@@ -937,13 +995,27 @@ async function signMultiTransaction(
     });
   });
 
-  const transaction = wallet.createTransfer({
-    seqno,
-    secretKey: Buffer.from(privateKey),
-    messages: preparedMessages,
-    sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
-    timeout: expireAt,
-  });
+  let transaction;
+  if (withW5Diesel) {
+    const actionList = packActionsList(preparedMessages.map(
+      (msg) => new ActionSendMsg(SendMode.PAY_GAS_SEPARATELY, msg),
+    ));
+
+    transaction = createBody(
+      actionList,
+      seqno,
+      Buffer.from(privateKey),
+      PENDING_DIESEL_TIMEOUT,
+    );
+  } else {
+    transaction = wallet.createTransfer({
+      seqno,
+      secretKey: Buffer.from(privateKey),
+      messages: preparedMessages,
+      sendMode: SendMode.PAY_GAS_SEPARATELY + SendMode.IGNORE_ERRORS,
+      timeout: expireAt,
+    });
+  }
 
   const externalMessage = toExternalMessage(wallet, seqno, transaction);
 
@@ -1159,7 +1231,9 @@ export async function fixTokenActivitiesAddressForm(network: ApiNetwork, activit
   }
 }
 
-export async function fetchEstimateDiesel(accountId: string, tokenAddress: string) {
+export async function fetchEstimateDiesel(
+  accountId: string, tokenAddress: string, isW5 = false,
+) {
   const { network } = parseAccountId(accountId);
   if (network !== 'mainnet') return undefined;
 
@@ -1171,13 +1245,14 @@ export async function fetchEstimateDiesel(accountId: string, tokenAddress: strin
 
   if (balance >= MAX_BALANCE_WITH_CHECK_DIESEL) return undefined;
 
-  const toncoinAmount = toDecimal((TINY_TOKEN_TRANSFER_AMOUNT + DEFAULT_FEE) * 2n);
+  const multiplier = TOKENS_WITH_STARS_FEE.has(tokenAddress) ? 1n : 2n;
+  const toncoinAmount = toDecimal((TINY_TOKEN_TRANSFER_AMOUNT + DEFAULT_FEE) * multiplier);
 
   const {
     status,
     amount,
     pendingCreatedAt,
-  } = await estimateDiesel(address, tokenAddress, toncoinAmount);
+  } = await estimateDiesel(address, tokenAddress, toncoinAmount, isW5);
 
   const { decimals } = getTokenByAddress(tokenAddress)!;
 

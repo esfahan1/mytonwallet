@@ -1,11 +1,12 @@
 import type { Ref, RefObject } from 'react';
 import type { TeactNode } from '../../../../lib/teact/teact';
-import React, { memo } from '../../../../lib/teact/teact';
+import React, { memo, useMemo } from '../../../../lib/teact/teact';
 
 import type { ApiSwapActivity, ApiSwapAsset } from '../../../../api/types';
-import type { AppTheme } from '../../../../global/types';
+import type { Account, AppTheme } from '../../../../global/types';
 
 import { ANIMATED_STICKER_TINY_ICON_PX, TONCOIN, WHOLE_PART_DELIMITER } from '../../../../config';
+import { resolveSwapAsset } from '../../../../global/helpers';
 import buildClassName from '../../../../util/buildClassName';
 import { formatTime } from '../../../../util/dateFormat';
 import { formatCurrencyExtended } from '../../../../util/formatNumber';
@@ -27,6 +28,7 @@ type OwnProps = {
   activity: ApiSwapActivity;
   isActive: boolean;
   appTheme: AppTheme;
+  addressByChain?: Account['addressByChain'];
   onClick: (id: string) => void;
 };
 
@@ -41,6 +43,7 @@ function Swap({
   isLast,
   isActive,
   appTheme,
+  addressByChain,
   onClick,
 }: OwnProps) {
   const lang = useLang();
@@ -54,8 +57,17 @@ function Swap({
     cex,
   } = activity;
 
-  const fromToken = tokensBySlug?.[from];
-  const toToken = tokensBySlug?.[to];
+  const fromToken = useMemo(() => {
+    if (!from || !tokensBySlug) return undefined;
+
+    return resolveSwapAsset(tokensBySlug, from);
+  }, [from, tokensBySlug]);
+  const toToken = useMemo(() => {
+    if (!to || !tokensBySlug) return undefined;
+
+    return resolveSwapAsset(tokensBySlug, to);
+  }, [to, tokensBySlug]);
+
   const fromAmount = Number(activity.fromAmount);
   const toAmount = Number(activity.toAmount);
   const isPending = status === 'pending'
@@ -65,6 +77,8 @@ function Swap({
   const isHold = cex?.status === 'hold';
 
   const isFromToncoin = from === TONCOIN.slug;
+  const isInternalSwap = !cex
+    || Boolean(fromToken?.chain === 'ton' && cex.payoutAddress && cex.payoutAddress === addressByChain?.tron);
 
   const handleClick = useLastCallback(() => {
     onClick(id);
@@ -137,7 +151,7 @@ function Swap({
       state = lang('On Hold');
     } else if (cexStatus === 'failed' || isError) {
       state = lang('Failed');
-    } else if (cexStatus === 'waiting' && !isFromToncoin) {
+    } else if (cexStatus === 'waiting' && !isFromToncoin && !isInternalSwap) {
       // Skip the `waiting` status for transactions from TON to account for delayed status updates from Changelly
       state = lang('Waiting for Payment');
     } else if (isPending) {

@@ -2,10 +2,9 @@ import type { Cell } from '@ton/core';
 
 import type { DieselStatus } from '../../../global/types';
 import type {
-  ApiAnyDisplayError, ApiParsedPayload, ApiTransaction, ApiWalletInfo,
+  ApiAnyDisplayError, ApiParsedPayload, ApiTransaction,
 } from '../../types';
 import type { ContractType } from './constants';
-import type { TonWallet } from './util/tonCore';
 
 export type ApiTonWalletVersion = 'simpleR1'
 | 'simpleR2'
@@ -27,7 +26,7 @@ export interface ApiTransactionExtra extends ApiTransaction {
 }
 
 export interface TokenTransferBodyParams {
-  queryId?: number;
+  queryId?: bigint;
   tokenAmount: bigint;
   toAddress: string;
   responseAddress: string;
@@ -95,10 +94,6 @@ export type GetAddressInfoResponse = {
   state: 'uninitialized' | 'active';
 };
 
-export type WalletInfo = ApiWalletInfo & {
-  wallet: TonWallet;
-};
-
 export type ApiSubmitTransferTonResult = {
   toAddress: string;
   amount: bigint;
@@ -115,6 +110,7 @@ export type ApiSubmitMultiTransferResult = {
   seqno: number;
   boc: string;
   msgHash: string;
+  paymentLink?: string;
 } | {
   error: string;
 };
